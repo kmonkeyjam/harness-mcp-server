@@ -834,3 +834,182 @@ describe("incident — harness_execute (root-cause theory status actions)", () =
     },
   );
 });
+
+describe("incident_timeline_event", () => {
+  let server: ReturnType<typeof makeMcpServer>;
+  let mockRequest: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    server = makeMcpServer("accept");
+    mockRequest = vi.fn().mockResolvedValue({
+      results: [{ eventId: "e1", eventType: "ONCALL_PAGED", timestamp: 1, actor: "Ada", message: "Paged" }],
+      nextPageCursor: "c2",
+      hasMoreResults: true,
+    });
+    const registry = new Registry(makeConfig());
+    const { registerListTool } = await import("../../src/tools/harness-list.js");
+    registerListTool(server, registry, makeClient(mockRequest));
+  });
+
+  it("is list-only and requires incident_id", () => {
+    const def = new Registry(makeConfig()).getResource("incident_timeline_event");
+    expect(Object.keys(def.operations)).toEqual(["list"]);
+    expect(def.listFilterFields?.find((f) => f.name === "incident_id")?.required).toBe(true);
+  });
+
+  it("lists the incident's timeline with normalized event groups and a cursor envelope", async () => {
+    const result = await server.call("harness_list", {
+      resource_type: "incident_timeline_event",
+      filters: { incident_id: "INC-123", event_groups: "user_messages,ai", sort_direction: "ASC" },
+    });
+    expect(result.isError).toBeUndefined();
+    const callArgs = mockRequest.mock.calls[0]![0] as { path: string; params: Record<string, unknown> };
+    expect(callArgs.path).toBe("/gateway/ir/tp/api/v1/mc/activities/INC-123/timeline");
+    expect(callArgs.params.eventGroups).toEqual(["USER_MESSAGES", "AI"]);
+    expect(callArgs.params.sortDirection).toBe("ASC");
+    const data = parseResult(result) as { items: Array<Record<string, unknown>>; pagination: Record<string, unknown> };
+    expect(data.items[0]).toMatchObject({ eventId: "e1", eventType: "ONCALL_PAGED", actor: "Ada" });
+    expect(data.pagination).toMatchObject({ next_cursor: "c2", has_more: true });
+  });
+
+  it("errors without calling the API when incident_id is omitted", async () => {
+    const result = await server.call("harness_list", { resource_type: "incident_timeline_event" });
+    expect(result.isError).toBe(true);
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("incident — harness_execute (post_timeline_event)", () => {
+  let server: ReturnType<typeof makeMcpServer>;
+  let mockRequest: ReturnType<typeof vi.fn>;
+
+  beforeEach(async () => {
+    server = makeMcpServer("accept");
+    mockRequest = vi.fn().mockResolvedValue({
+      eventId: "e9", eventType: "STREAM_MESSAGE", timestamp: 5, actor: "", message: "**hotfix** deployed", internal: "x",
+    });
+    const { registerExecuteTool } = await import("../../src/tools/harness-execute.js");
+    registerExecuteTool(server, new Registry(makeConfig()), makeClient(mockRequest), makeConfig());
+  });
+
+  it("posts the message to the activity timeline path and returns the projected echo", async () => {
+    const result = await server.call("harness_execute", {
+      resource_type: "incident",
+      action: "post_timeline_event",
+      resource_id: "INC-2027",
+      body: { message: "**hotfix** deployed" },
+    });
+    expect(result.isError).toBeUndefined();
+    const callArgs = mockRequest.mock.calls[0]![0] as { method: string; path: string; body: Record<string, unknown> };
+    expect(callArgs.method).toBe("POST");
+    expect(callArgs.path).toBe("/gateway/ir/tp/api/v1/mc/activities/INC-2027/timeline");
+    expect(callArgs.body.message).toBe("**hotfix** deployed");
+    const data = parseResult(result) as Record<string, unknown>;
+    expect(data).toMatchObject({ eventId: "e9", message: "**hotfix** deployed" });
+    expect(data).not.toHaveProperty("internal");
+  });
+
+  it("rejects a body without a message before calling the API", async () => {
+    const result = await server.call("harness_execute", {
+      resource_type: "incident",
+      action: "post_timeline_event",
+      resource_id: "INC-2027",
+      body: {},
+    });
+    expect(result.isError).toBe(true);
+    expect(mockRequest).not.toHaveBeenCalled();
+  });
+
+  it("documents that persistence is asynchronous", () => {
+    const desc = new Registry(makeConfig()).getResource("incident").executeActions?.post_timeline_event?.actionDescription ?? "";
+    expect(desc).toMatch(/asynchronous/i);
+  });
+});
+
+describe("incident_transcript", () => {
+  const summary = {
+    meetingId: "m-1", incidentId: "INC-7", meetingUrl: "https://zoom.example/j/1", provider: "ZOOM",
+    state: "DONE", createdAt: 1000, updatedAt: 2000, itemCount: 120, internal: "x",
+  };
+  let server: ReturnType<typeof makeMcpServer>;
+  let registry: Registry;
+
+  beforeEach(() => {
+    server = makeMcpServer();
+    registry = new Registry(makeConfig());
+  });
+
+  it("lists metadata only for an incident", async () => {
+    const mockRequest = vi.fn().mockResolvedValue({ transcripts: [summary] });
+    const { registerListTool } = await import("../../src/tools/harness-list.js");
+    registerListTool(server, registry, makeClient(mockRequest));
+
+    const result = await server.call("harness_list", {
+      resource_type: "incident_transcript",
+      filters: { incident_id: "INC-7" },
+    });
+    expect(result.isError).toBeUndefined();
+    const callArgs = mockRequest.mock.calls[0]![0] as { path: string };
+    expect(callArgs.path).toBe("/gateway/ir/tp/api/v1/mc/activities/INC-7/transcripts");
+    const data = parseResult(result) as { items: Array<Record<string, unknown>>; total: number };
+    expect(data.total).toBe(1);
+    expect(data.items[0]).toMatchObject({ meetingId: "m-1", provider: "ZOOM", itemCount: 120 });
+    expect(data.items[0]).not.toHaveProperty("internal");
+  });
+
+  it("gets a page of utterances using resource_id as the meeting id and forwards cursor/size", async () => {
+    const mockRequest = vi.fn().mockResolvedValue({
+      transcript: summary,
+      utterances: [{ speaker: "Alex", sentence: "Rollback done.", startTime: 842.4, endTime: 846.1, extra: 1 }],
+      nextPageCursor: "846.1",
+      hasMoreResults: true,
+    });
+    const { registerGetTool } = await import("../../src/tools/harness-get.js");
+    registerGetTool(server, registry, makeClient(mockRequest));
+
+    const result = await server.call("harness_get", {
+      resource_type: "incident_transcript",
+      resource_id: "m-1",
+      params: { incident_id: "INC-7", cursor: "100.5", size: 50 },
+    });
+    expect(result.isError).toBeUndefined();
+    const callArgs = mockRequest.mock.calls[0]![0] as { path: string; params: Record<string, unknown> };
+    expect(callArgs.path).toBe("/gateway/ir/tp/api/v1/mc/activities/INC-7/transcripts/m-1");
+    expect(callArgs.params.cursor).toBe("100.5");
+    expect(callArgs.params.pageSize).toBe(50);
+    const data = parseResult(result) as {
+      transcript: Record<string, unknown>;
+      utterances: Array<Record<string, unknown>>;
+      pagination: Record<string, unknown>;
+    };
+    expect(data.transcript.meetingId).toBe("m-1");
+    expect(data.utterances[0]).toEqual({ speaker: "Alex", sentence: "Rollback done.", startTime: 842.4, endTime: 846.1 });
+    expect(data.pagination).toMatchObject({ cursor: "100.5", next_cursor: "846.1", has_more: true });
+  });
+
+  it("omits next_cursor on the last page so a paging loop terminates", async () => {
+    const mockRequest = vi.fn().mockResolvedValue({
+      transcript: summary, utterances: [], nextPageCursor: "9.0", hasMoreResults: false,
+    });
+    const { registerGetTool } = await import("../../src/tools/harness-get.js");
+    registerGetTool(server, registry, makeClient(mockRequest));
+
+    const result = await server.call("harness_get", {
+      resource_type: "incident_transcript", resource_id: "m-1", params: { incident_id: "INC-7" },
+    });
+    const data = parseResult(result) as { pagination: Record<string, unknown> };
+    expect(data.pagination.has_more).toBe(false);
+    expect(data.pagination.next_cursor).toBeUndefined();
+  });
+
+  it("includes transcript descriptors in the incident detail view only", async () => {
+    const raw = { prettyId: "INC-7", title: "Outage", transcripts: [summary] };
+    const mockRequest = vi.fn().mockResolvedValue(raw);
+    const { registerGetTool } = await import("../../src/tools/harness-get.js");
+    registerGetTool(server, registry, makeClient(mockRequest));
+    const result = await server.call("harness_get", { resource_type: "incident", resource_id: "INC-7" });
+    const data = parseResult(result) as { transcripts: Array<Record<string, unknown>> };
+    expect(data.transcripts[0]).toMatchObject({ meetingId: "m-1", itemCount: 120 });
+    expect(data.transcripts[0]).not.toHaveProperty("internal");
+  });
+});

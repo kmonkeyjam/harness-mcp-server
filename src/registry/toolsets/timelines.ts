@@ -4,7 +4,7 @@ import { MC_SCOPE } from "./scopes.js";
 import { projectTimelineEvent, timelineListExtract } from "../extractors.js";
 
 /** GET and POST share this path; the activity prettyId is the only path param. */
-const TIMELINE_PATH = "/gateway/ir/tp/api/v1/mc/activities/{activityId}/timeline";
+export const TIMELINE_PATH = "/gateway/ir/tp/api/v1/mc/activities/{activityId}/timeline";
 
 /**
  * The named `TimelineEventGroup` values. Membership is deliberately lossy on the
@@ -12,7 +12,7 @@ const TIMELINE_PATH = "/gateway/ir/tp/api/v1/mc/activities/{activityId}/timeline
  * AI_CHANGE_AGENT_REASONING and the ACTION_* / WEBHOOK_LOG script noise belong
  * to no group — so omitting the filter means "all named groups", not "all events".
  */
-const EVENT_GROUPS = [
+export const EVENT_GROUPS = [
   "USER_MESSAGES",
   "LIFECYCLE",
   "PAGING",
@@ -42,7 +42,7 @@ const EVENT_GROUPS = [
  * empty repeated param. Runs after enum canonicalization and before query-param
  * mapping, so the mutation reaches the wire.
  */
-function normalizeEventGroups(input: Record<string, unknown>): void {
+export function normalizeEventGroups(input: Record<string, unknown>): void {
   const raw = input.event_groups;
   if (raw === undefined || raw === null) return;
   const parts = (Array.isArray(raw) ? raw : String(raw).split(","))
@@ -59,7 +59,7 @@ function normalizeEventGroups(input: Record<string, unknown>): void {
  * `PostTimelineMessageRequest` is a single-field record with no @JsonProperty
  * overrides, so the wire name is the field name verbatim.
  */
-const postMessageSchema: BodySchema = {
+export const postMessageSchema: BodySchema = {
   description: "Markdown note to append to the activity's timeline (PostTimelineMessageRequest)",
   fields: [
     {

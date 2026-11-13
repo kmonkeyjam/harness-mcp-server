@@ -3,6 +3,8 @@ import { buildBodyNormalized } from "../../utils/body-normalizer.js";
 import { offsetListExtract } from "../extractors.js";
 import { MC_SCOPE } from "./scopes.js";
 import { projectRelatedActivity } from "./related-activities.js";
+import { TIMELINE_PATH, EVENT_GROUPS, normalizeEventGroups, postMessageSchema } from "./timelines.js";
+import { projectTimelineEvent, timelineListExtract } from "../extractors.js";
 import { isRecord } from "../../utils/type-guards.js";
 
 /**
@@ -68,6 +70,61 @@ function projectKeyEvent(e: unknown): unknown {
 }
 
 /**
+ * Project transcript metadata (no utterances). Used for the descriptors embedded
+ * in the incident detail view and for the transcript list/get responses.
+ */
+function projectTranscriptSummary(t: unknown): unknown {
+  if (!isRecord(t)) return t;
+  const out: Record<string, unknown> = {};
+  for (const key of ["meetingId", "incidentId", "meetingUrl", "provider", "state"]) {
+    if (typeof t[key] === "string") out[key] = t[key];
+  }
+  for (const key of ["createdAt", "updatedAt", "itemCount"]) {
+    if (typeof t[key] === "number") out[key] = t[key];
+  }
+  return out;
+}
+
+function projectUtterance(u: unknown): unknown {
+  if (!isRecord(u)) return u;
+  const out: Record<string, unknown> = {};
+  if (typeof u.speaker === "string") out.speaker = u.speaker;
+  if (typeof u.sentence === "string") out.sentence = u.sentence;
+  if (typeof u.startTime === "number") out.startTime = u.startTime;
+  if (typeof u.endTime === "number") out.endTime = u.endTime;
+  return out;
+}
+
+/**
+ * Transcript list: the backend wraps the metadata in `{ transcripts }` and the
+ * collection is small (one per meeting), so there is no pagination.
+ */
+function transcriptListExtract(raw: unknown): unknown {
+  const transcripts = isRecord(raw) && Array.isArray(raw.transcripts) ? raw.transcripts : [];
+  const items = transcripts.map(projectTranscriptSummary);
+  return { items, total: items.length };
+}
+
+/**
+ * Transcript get: metadata plus one page of utterances. `next_cursor` is only
+ * emitted when a page actually follows, so an agent's `while (next_cursor)` loop
+ * terminates.
+ */
+function transcriptGetExtract(raw: unknown, input?: Record<string, unknown>): unknown {
+  if (!isRecord(raw)) return raw;
+  const hasMore = raw.hasMoreResults === true;
+  return {
+    transcript: projectTranscriptSummary(raw.transcript),
+    utterances: Array.isArray(raw.utterances) ? raw.utterances.map(projectUtterance) : [],
+    pagination: {
+      cursor: typeof input?.cursor === "string" ? input.cursor : undefined,
+      next_cursor: hasMore && typeof raw.nextPageCursor === "string" ? raw.nextPageCursor : undefined,
+      has_more: hasMore,
+    },
+  };
+}
+
+/**
  * Max summary length kept in list view. Incident summaries are multi-paragraph
  * narratives (often ~1KB), which dominate a list payload once multiplied by the
  * page size. The full text stays available via harness_get.
@@ -122,6 +179,9 @@ function projectIncident(raw: Record<string, unknown>, verbose: boolean): Record
   }
   if (verbose && typeof raw.rootCauseTheoriesSha === "string") {
     slim.rootCauseTheoriesSha = raw.rootCauseTheoriesSha;
+  }
+  if (verbose && Array.isArray(raw.transcripts) && raw.transcripts.length > 0) {
+    slim.transcripts = raw.transcripts.map(projectTranscriptSummary);
   }
   if (Array.isArray(raw.relatedActivities) && raw.relatedActivities.length > 0) {
     slim.relatedActivities = raw.relatedActivities.map(projectRelatedActivity);
@@ -390,6 +450,23 @@ export const incidentsToolset: ToolsetDefinition = {
         },
       },
       executeActions: {
+        post_timeline_event: {
+          method: "POST",
+          path: TIMELINE_PATH,
+          // low_write: appending a note is additive and does not change incident state; same
+          // level as activity_timeline.post_message.
+          operationPolicy: { risk: "low_write", retryPolicy: "do_not_retry" },
+          pathParams: { incident_id: "activityId" },
+          bodyBuilder: buildBodyNormalized(),
+          bodySchema: postMessageSchema,
+          responseExtractor: projectTimelineEvent,
+          actionDescription:
+            "Post a markdown note to the incident's timeline. The response is an echo of the write, not a read-back: "
+            + "`actor` is empty, `message` is the raw markdown as submitted, and `timestamp` is when the write was "
+            + "accepted. Persistence is asynchronous, so an immediate harness_list of incident_timeline_event may not "
+            + "show the event yet — that is not a failure, do not retry. Posted events cannot be edited or deleted; "
+            + "post a new event to correct an earlier one.",
+        },
         close: {
           method: "POST",
           path: "/gateway/ir/tp/api/v1/mc/incidents/{incidentId}/close",
@@ -438,6 +515,107 @@ export const incidentsToolset: ToolsetDefinition = {
           "undo",
           "Return a confirmed or ruled-out root-cause theory to INVESTIGATING.",
         ),
+      },
+    },
+    {
+      resourceType: "incident_timeline_event",
+      displayName: "Incident Timeline Event",
+      description:
+        "The chronological, append-only audit stream of one incident (pages, runbook runs, messages, status "
+        + "changes, AI activity). Read with harness_list and a required incident_id filter; append a note with "
+        + "harness_execute(resource_type='incident', action='post_timeline_event'). There is no get, update or "
+        + "delete: events are permanent, and a correction is a new event. In list responses `total` is this page's "
+        + "size, not the timeline length — page with pagination.has_more.",
+      toolset: "incidents",
+      scope: "project",
+      scopeParams: MC_SCOPE,
+      identifierFields: ["incident_id"],
+      searchAliases: ["incident timeline", "incident events", "incident audit log"],
+      diagnosticHint:
+        "List with harness_list(resource_type='incident_timeline_event', filters={incident_id:'INC-123'}). "
+        + "Narrow noisy timelines with event_groups rather than paging further, and page with "
+        + "pagination.has_more / pagination.next_cursor — never stop on a short page.",
+      relatedResources: [
+        { resourceType: "incident", relationship: "parent", description: "The incident this timeline belongs to" },
+      ],
+      listFilterFields: [
+        { name: "incident_id", required: true, description: "Incident prettyId whose timeline to read, e.g. INC-123" },
+        {
+          name: "event_groups",
+          description:
+            "Event groups to include (multi-value, OR-combined). Omit for all named groups, which is not every event: "
+            + "raw action and webhook logs belong to no group and stay excluded either way.",
+          enum: [...EVENT_GROUPS],
+        },
+        { name: "cursor", description: "Cursor for the next page, taken from the previous response's pagination.next_cursor" },
+        { name: "sort_direction", description: "Sort direction on event time. Defaults to DESC (newest first).", enum: ["ASC", "DESC"] },
+      ],
+      operations: {
+        list: {
+          method: "GET",
+          path: TIMELINE_PATH,
+          operationPolicy: { risk: "read", retryPolicy: "safe" },
+          pathParams: { incident_id: "activityId" },
+          queryParams: {
+            event_groups: "eventGroups",
+            cursor: "cursor",
+            sort_direction: "sortDirection",
+            size: "pageSize",
+          },
+          preflight: async ({ input }) => {
+            normalizeEventGroups(input);
+          },
+          responseExtractor: timelineListExtract,
+          skipCompact: true,
+          description: "List an incident's timeline events (requires incident_id), newest first by default",
+        },
+      },
+    },
+    {
+      resourceType: "incident_transcript",
+      displayName: "Incident Transcript",
+      description:
+        "A recorded meeting transcript attached to an incident (one per meeting). Read-only: transcripts are created "
+        + "by the meeting recorder, never through MCP. harness_list (incident_id filter) returns metadata only — "
+        + "meeting id, URL, provider, state, timestamps and utterance count. harness_get returns the metadata plus one "
+        + "page of timestamped utterances; page long calls with params.cursor and params.size.",
+      toolset: "incidents",
+      scope: "project",
+      scopeParams: MC_SCOPE,
+      identifierFields: ["incident_id", "transcript_id"],
+      searchAliases: ["meeting transcript", "incident call transcript", "incident meeting"],
+      diagnosticHint:
+        "List transcripts with harness_list(resource_type='incident_transcript', filters={incident_id:'INC-123'}), then "
+        + "read one with harness_get(resource_type='incident_transcript', resource_id=<meetingId>, params={incident_id:'INC-123'}). "
+        + "Follow pagination.next_cursor (pass it as params.cursor) until has_more is false. An unfinished meeting "
+        + "(state IN_CALL) may have a partial transcript.",
+      relatedResources: [
+        { resourceType: "incident", relationship: "parent", description: "The incident the meeting belongs to" },
+      ],
+      listFilterFields: [
+        { name: "incident_id", required: true, description: "Incident prettyId whose transcripts to list, e.g. INC-123" },
+      ],
+      operations: {
+        list: {
+          method: "GET",
+          path: "/gateway/ir/tp/api/v1/mc/activities/{activityId}/transcripts",
+          operationPolicy: { risk: "read", retryPolicy: "safe" },
+          pathParams: { incident_id: "activityId" },
+          responseExtractor: transcriptListExtract,
+          skipCompact: true,
+          description: "List an incident's meeting transcripts, metadata only (requires incident_id)",
+        },
+        get: {
+          method: "GET",
+          path: "/gateway/ir/tp/api/v1/mc/activities/{activityId}/transcripts/{meetingId}",
+          operationPolicy: { risk: "read", retryPolicy: "safe" },
+          pathParams: { incident_id: "activityId", transcript_id: "meetingId" },
+          queryParams: { cursor: "cursor", size: "pageSize" },
+          responseExtractor: transcriptGetExtract,
+          description:
+            "Get a transcript's metadata and one page of utterances ordered by start time. Pass incident_id via "
+            + "params; use params.cursor / params.size to page.",
+        },
       },
     },
   ],
