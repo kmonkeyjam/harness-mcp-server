@@ -516,6 +516,18 @@ describe("ConfigSchema — boolean env var coercion", () => {
     if (result.success) expect(result.data.HARNESS_READ_ONLY).toBe(true);
   });
 
+  it("HARNESS_IR_DISABLE_GATEWAY defaults to false and accepts true", () => {
+    for (const [extra, expected] of [
+      [{}, false],
+      [{ HARNESS_IR_DISABLE_GATEWAY: "false" }, false],
+      [{ HARNESS_IR_DISABLE_GATEWAY: "true" }, true],
+    ] as const) {
+      const result = ConfigSchema.safeParse({ ...validConfig, ...extra });
+      expect(result.success).toBe(true);
+      if (result.success) expect(result.data.HARNESS_IR_DISABLE_GATEWAY).toBe(expected);
+    }
+  });
+
   it("HARNESS_SCHEMA_MODE defaults to compact when unset or empty", () => {
     for (const extra of [{}, { HARNESS_SCHEMA_MODE: "" }]) {
       const result = ConfigSchema.safeParse({ ...validConfig, ...extra });

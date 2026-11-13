@@ -212,6 +212,9 @@ const RawConfigSchema = z.object({
     z.enum(["none", "low_write", "medium_write", "high_write", "all"]).optional(),
   ),
   HARNESS_ALLOW_HTTP: booleanFromEnv.default(false),
+  // Local IR services may expose /ir directly instead of through the platform
+  // /gateway prefix. Production routing remains unchanged unless explicitly disabled.
+  HARNESS_IR_DISABLE_GATEWAY: booleanFromEnv.default(false),
   HARNESS_MCP_ALLOWED_HOSTS: optionalStringFromEnv.transform(validateAllowedHosts),
   HARNESS_MCP_AUTH_TOKEN: optionalStringFromEnv,
   HARNESS_MCP_ALLOW_UNAUTHENTICATED_HTTP: booleanFromEnv.default(false),
