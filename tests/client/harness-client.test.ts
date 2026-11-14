@@ -232,36 +232,6 @@ describe("HarnessClient", () => {
       expect(url).toContain("https://app.harness.io/gateway/log-service/blob/download?");
     });
 
-    it("keeps the IR gateway prefix by default", async () => {
-      fetchSpy.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
-      const client = new HarnessClient(makeConfig());
-
-      await client.request({ path: "/gateway/ir/tp/api/v1/mc/incidents" });
-
-      const url = new URL(fetchSpy.mock.calls[0][0] as string);
-      expect(url.pathname).toBe("/gateway/ir/tp/api/v1/mc/incidents");
-    });
-
-    it.each(["request", "requestStream"] as const)(
-      "removes only the IR gateway prefix for local testing via %s",
-      async (method) => {
-        fetchSpy
-          .mockResolvedValueOnce(new Response(method === "request" ? "{}" : "ok", { status: 200 }))
-          .mockResolvedValueOnce(new Response(method === "request" ? "{}" : "ok", { status: 200 }));
-        const client = new HarnessClient(makeConfig({ HARNESS_IR_DISABLE_GATEWAY: true }));
-
-        await client[method]({ path: "/gateway/ir/tp/api/v1/mc/incidents" });
-
-        const irUrl = new URL(fetchSpy.mock.calls[0][0] as string);
-        expect(irUrl.pathname).toBe("/ir/tp/api/v1/mc/incidents");
-
-        await client[method]({ path: "/gateway/log-service/blob/download" });
-
-        const nonIrUrl = new URL(fetchSpy.mock.calls[1][0] as string);
-        expect(nonIrUrl.pathname).toBe("/gateway/log-service/blob/download");
-      },
-    );
-
     it("uses baseUrl override when provided (e.g. FME/Split.io)", async () => {
       fetchSpy.mockResolvedValue(new Response(JSON.stringify({}), { status: 200 }));
       const client = new HarnessClient(makeConfig({ HARNESS_BASE_URL: "https://app.harness.io" }));

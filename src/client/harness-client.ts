@@ -306,7 +306,6 @@ export class HarnessClient {
   private readonly maxRetries: number;
   private readonly rateLimiter: RateLimiter;
   private readonly logUnsafeBodies: boolean;
-  private readonly disableIrGateway: boolean;
   private readonly fmeApiKey: string | undefined;
   private readonly appsecApiKey: string | undefined;
   private readonly mcpMode: Config["HARNESS_MCP_MODE"];
@@ -323,7 +322,6 @@ export class HarnessClient {
     this.maxRetries = config.HARNESS_MAX_RETRIES;
     this.rateLimiter = new RateLimiter(config.HARNESS_RATE_LIMIT_RPS);
     this.logUnsafeBodies = config.HARNESS_LOG_UNSAFE_BODIES;
-    this.disableIrGateway = config.HARNESS_IR_DISABLE_GATEWAY;
     this.fmeApiKey = resolveFmeApiKey(config);
     this.appsecApiKey = resolveAppSecApiKey(config);
     this.mcpMode = config.HARNESS_MCP_MODE;
@@ -787,10 +785,6 @@ export class HarnessClient {
     if (!path.startsWith("/") || path.startsWith("//") || /[?#\\\u0000-\u0020\u007f]/u.test(path) ||
         path.split("/").some((segment) => /^(?:\.|%2e){1,2}$/i.test(segment))) {
       throw new Error("Invalid request path: use encoded path segments and options.params for query values");
-    }
-
-    if (this.disableIrGateway && (path === "/gateway/ir" || path.startsWith("/gateway/ir/"))) {
-      path = path.slice("/gateway".length);
     }
 
     const basePath = new URL(baseUrl).pathname.replace(/\/$/, "");

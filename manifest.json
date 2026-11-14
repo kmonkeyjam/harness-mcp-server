@@ -53,7 +53,6 @@
         "HARNESS_ORG": "${user_config.HARNESS_ORG}",
         "HARNESS_PROJECT": "${user_config.HARNESS_PROJECT}",
         "HARNESS_BASE_URL": "${user_config.HARNESS_BASE_URL}",
-        "HARNESS_IR_DISABLE_GATEWAY": "${user_config.HARNESS_IR_DISABLE_GATEWAY}",
         "HARNESS_SCHEMA_MODE": "${user_config.HARNESS_SCHEMA_MODE}",
         "HARNESS_MCP_APPS": "${user_config.HARNESS_MCP_APPS}",
         "MCP_SESSION_TTL_MS": "${user_config.MCP_SESSION_TTL_MS}"
@@ -172,14 +171,6 @@
       "title": "Harness Base URL",
       "description": "Harness API/UI base URL for this local MCP server. Use the default for public Harness SaaS, or set an environment such as https://harness0.harness.io when running the server yourself.",
       "default": "https://app.harness.io",
-      "required": false,
-      "sensitive": false
-    },
-    "HARNESS_IR_DISABLE_GATEWAY": {
-      "type": "string",
-      "title": "Disable IR Gateway Prefix",
-      "description": "Set true only for local IR services that expose /ir/... directly instead of /gateway/ir/....",
-      "default": "false",
       "required": false,
       "sensitive": false
     },

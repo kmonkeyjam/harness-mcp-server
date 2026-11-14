@@ -207,8 +207,3 @@
 - **Issue**: Server tests covered the `_meta` view data, but nothing exercised the view's own behavior (refresh replacing the displayed view), so UI regressions could ship unnoticed. The new `HARNESS_MCP_APPS` knob also missed the packaged manifests (see Public Config Surface Alignment).
 - **Fix**: Keep view logic in DOM-free modules (`apps/harness-app/src/host.ts`, `chart-data.ts`) and test them from `tests/apps/` with the ext-apps `App` call stubbed.
 - **Rule**: Every view action that calls back to the server (refresh, re-run) needs a test asserting what the view displays after success, empty, and error results.
-
-## Fetch Response Mocks Are Single-Use
-- **Issue**: A client test reused one mocked `Response` for two fetches; the second request failed because the first had consumed its body.
-- **Fix**: Return a fresh `Response` for every expected fetch with `mockResolvedValueOnce`.
-- **Rule**: Never reuse a Fetch API `Response` instance across multiple mocked requests.
