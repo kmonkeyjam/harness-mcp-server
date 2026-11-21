@@ -60,6 +60,22 @@ function parseResult(result: ToolResult): unknown {
 }
 
 describe("incident resource definition", () => {
+  it("maps colloquial incident-message requests to the timeline action", () => {
+    const registry = new Registry(makeConfig());
+    const def = registry.getResource("incident");
+
+    expect(def.searchAliases).toEqual(expect.arrayContaining([
+      "add to incident",
+      "incident message",
+      "incident note",
+      "incident comment",
+      "comment on incident",
+    ]));
+    expect(def.executeHint).toContain("action='post_timeline_event'");
+    expect(def.executeHint).toContain("body={message:");
+    expect(registry.searchResources("add to incident")[0]?.type).toBe("incident");
+  });
+
   it("constrains the severity filter to the known option ids", () => {
     const registry = new Registry(makeConfig());
     const def = registry.getResource("incident");
@@ -923,6 +939,8 @@ describe("incident — harness_execute (post_timeline_event)", () => {
   it("documents that persistence is asynchronous", () => {
     const desc = new Registry(makeConfig()).getResource("incident").executeActions?.post_timeline_event?.actionDescription ?? "";
     expect(desc).toMatch(/asynchronous/i);
+    expect(desc).toMatch(/message, note, comment, or update/i);
+    expect(desc).toMatch(/add or post something to an incident/i);
   });
 });
 

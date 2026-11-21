@@ -374,6 +374,17 @@ export const incidentsToolset: ToolsetDefinition = {
       scope: "project",
       scopeParams: MC_SCOPE,
       identifierFields: ["incident_id"],
+      searchAliases: [
+        "add to incident",
+        "incident message",
+        "incident note",
+        "incident comment",
+        "comment on incident",
+      ],
+      executeHint:
+        "When someone asks to add, post, send, or leave a message, note, comment, or update on an incident, use "
+        + "harness_execute(resource_type='incident', action='post_timeline_event', resource_id='<incident id>', "
+        + "body={message:'<text>'}). This appends a permanent timeline entry; it cannot be edited or deleted.",
       compactItem: compactIncident,
       relatedResources: [
         {
@@ -461,7 +472,8 @@ export const incidentsToolset: ToolsetDefinition = {
           bodySchema: postMessageSchema,
           responseExtractor: projectTimelineEvent,
           actionDescription:
-            "Post a markdown note to the incident's timeline. The response is an echo of the write, not a read-back: "
+            "Post a markdown message, note, comment, or update to the incident's timeline. Use this when someone "
+            + "colloquially asks to add or post something to an incident. The response is an echo of the write, not a read-back: "
             + "`actor` is empty, `message` is the raw markdown as submitted, and `timestamp` is when the write was "
             + "accepted. Persistence is asynchronous, so an immediate harness_list of incident_timeline_event may not "
             + "show the event yet — that is not a failure, do not retry. Posted events cannot be edited or deleted; "
